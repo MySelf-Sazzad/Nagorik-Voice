@@ -1,0 +1,10 @@
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+import AdminPortal from './AdminPortal'
+import LanguageTranslator from './LanguageTranslator'
+import './styles.css'
+import './logo.css'
+import './features.css'
+const isAdminPath = window.location.pathname.toLowerCase() === '/admin'
+ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode>{isAdminPath?<AdminPortal/>:<><LanguageTranslator/><App/></>}</React.StrictMode>)
