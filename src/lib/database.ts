@@ -10,7 +10,7 @@ type PostRow = { id:number; title:string; description:string; location:string; d
 export const formatUser = (authUser:User, profile?:ProfileRow|null):AppUser => {
   const metadata = authUser.user_metadata || {}
   const name = profile?.full_name || metadata.full_name || authUser.email?.split('@')[0] || 'Citizen'
-  return { id:authUser.id, name, email:authUser.email || '', city:profile?.city || metadata.city || 'Dhaka, Bangladesh', username:profile?.username || metadata.username || name.toLowerCase().replace(/[^a-z0-9]+/g,'.').replace(/^\.|\.$/g,''), avatar:profile?.avatar || metadata.avatar || initials(name), avatarUrl:profile?.avatar_url || '', coverUrl:profile?.cover_url || '', phone:profile?.phone || '', address:profile?.address || '', createdAt:profile?.created_at || authUser.created_at }
+  return { id:authUser.id, name, email:authUser.email || '', city:profile?.city || metadata.city || 'Dhaka, Bangladesh', username:profile?.username || metadata.username || name.toLowerCase().replace(/[^a-z0-9]+/g,'.').replace(/^\.|\.$/g,''), avatar:profile?.avatar || metadata.avatar || initials(name), avatarUrl:profile?.avatar_url || metadata.avatar_url || '', coverUrl:profile?.cover_url || metadata.cover_url || '', phone:profile?.phone || metadata.phone || '', address:profile?.address || metadata.address || '', createdAt:profile?.created_at || authUser.created_at }
 }
 
 export async function getCurrentUser(){
@@ -47,8 +47,17 @@ export async function createPost(user:AppUser,input:Pick<Issue,'title'|'descript
 }
 
 export async function updateProfile(user:AppUser){
-  const { error } = await supabase.from('profiles').update({full_name:user.name,city:user.city,avatar:initials(user.name),avatar_url:user.avatarUrl || null,cover_url:user.coverUrl || null,phone:user.phone || null,address:user.address || null,updated_at:new Date().toISOString()}).eq('id',user.id)
-  if(error) throw error
+  const baseProfile={full_name:user.name,city:user.city,avatar:initials(user.name),phone:user.phone || null,address:user.address || null,updated_at:new Date().toISOString()}
+  const { error } = await supabase.from('profiles').update({...baseProfile,avatar_url:user.avatarUrl || null,cover_url:user.coverUrl || null}).eq('id',user.id)
+  if(!error) return
+  // This fallback keeps profile edits working until the optional image columns
+  // have been added to an older Supabase project.
+  if(/avatar_url|cover_url/i.test(error.message)){
+    const { error:baseError } = await supabase.from('profiles').update(baseProfile).eq('id',user.id)
+    if(!baseError) return
+    throw baseError
+  }
+  throw error
 }
 
 export async function uploadProfileImage(userId:string,file:File,kind:'avatar'|'cover'){
