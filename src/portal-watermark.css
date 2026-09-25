@@ -1,0 +1,7 @@
+/* Right-side officer workspace watermark; the dark left navigation remains untouched. */
+.ccx-content{position:relative;isolation:isolate;overflow:visible}
+.ccx-content::before{content:"";position:absolute;inset:-10vh -8vw;z-index:-1;background-image:url('/portal-assets/government-seal-watermark.png');background-repeat:no-repeat;background-position:center center;background-size:min(82vw,82vh);opacity:.105;pointer-events:none}
+.ccx-content>*{position:relative;z-index:1}
+.ccx-content .ccx-header,.ccx-content .ccx-card,.ccx-content .ccx-metric,.ccx-content .ccx-user-detail{background-color:rgba(255,255,255,.92)!important;backdrop-filter:blur(2px)}
+.govx .ccx-content::before{opacity:.115}
+@media(max-width:760px){.ccx-content::before{background-size:118vw;background-position:center center;opacity:.075}.ccx-content .ccx-header,.ccx-content .ccx-card,.ccx-content .ccx-metric,.ccx-content .ccx-user-detail{background-color:rgba(255,255,255,.95)!important}}
