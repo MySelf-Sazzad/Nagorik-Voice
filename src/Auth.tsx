@@ -33,7 +33,7 @@ export default function Auth({onLogin}:{onLogin:(user:AppUser)=>void}){
    if(error) throw error
    if(data.user){
     const {data:profile}=await supabase.from('profiles').select('*').eq('id',data.user.id).maybeSingle()
-    onLogin({id:data.user.id,name:profile?.full_name||data.user.user_metadata.full_name||'Citizen',email:data.user.email||email,city:profile?.city||'Dhaka, Bangladesh',username:profile?.username||'',avatar:profile?.avatar||initials(data.user.user_metadata.full_name||'Citizen'),phone:profile?.phone||'',address:profile?.address||'',createdAt:profile?.created_at||data.user.created_at})
+    onLogin({id:data.user.id,name:profile?.full_name||data.user.user_metadata.full_name||'Citizen',email:data.user.email||email,city:profile?.city||data.user.user_metadata.city||'Dhaka, Bangladesh',username:profile?.username||data.user.user_metadata.username||'',avatar:profile?.avatar||data.user.user_metadata.avatar||initials(data.user.user_metadata.full_name||'Citizen'),avatarUrl:profile?.avatar_url||data.user.user_metadata.avatar_url||'',coverUrl:profile?.cover_url||data.user.user_metadata.cover_url||'',phone:profile?.phone||data.user.user_metadata.phone||'',address:profile?.address||data.user.user_metadata.address||'',createdAt:profile?.created_at||data.user.created_at})
    }
   }catch(error){setNotice(error instanceof Error?error.message:'Something went wrong. Please try again.')}
   finally{setBusy(false)}
