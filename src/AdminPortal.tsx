@@ -4,7 +4,7 @@ import type { Issue } from './data'
 import CCExperience from './CCExperience'
 import GovernmentExperience from './GovernmentExperience'
 import { approveCCPost, approveGovernmentPost, banCitizen, deleteCCPost, fetchPosts, forwardToGovernment, getOfficerRole, rejectCCPost, removeGovernmentCase, setCCStatus } from './lib/database'
-import { supabase } from './lib/supabase'
+import { officerSupabase } from './lib/supabase'
 
 type Portal='cc'|'govt'
 
@@ -14,8 +14,8 @@ export default function AdminPortal({portal}:{portal:Portal}){
  const isCC=portal==='cc', title=isCC?'City Corporation':'Government'
  const [logged,setLogged]=useState(false),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[error,setError]=useState(''),[items,setItems]=useState<Issue[]>([])
  const refresh=async()=>{try{setItems(await fetchPosts())}catch(error){setError(error instanceof Error?error.message:'Unable to load portal data.')}}
- useEffect(()=>{refresh();getOfficerRole().then(role=>setLogged(role===(isCC?'cc_officer':'government_officer'))).catch(()=>setLogged(false));const channel=supabase.channel(`portal-${portal}`).on('postgres_changes',{event:'*',schema:'public',table:'posts'},refresh).subscribe();return()=>{supabase.removeChannel(channel)}},[portal])
- const login=async(event:React.FormEvent)=>{event.preventDefault();setError('');const {error:loginError}=await supabase.auth.signInWithPassword({email:email.trim().toLowerCase(),password});if(loginError){setError(loginError.message);return}const role=await getOfficerRole();if(role!==(isCC?'cc_officer':'government_officer')){await supabase.auth.signOut();setError('This account does not have access to this officer portal.');return}setLogged(true);await refresh()}
+ useEffect(()=>{refresh();getOfficerRole().then(role=>setLogged(role===(isCC?'cc_officer':'government_officer'))).catch(()=>setLogged(false));const channel=officerSupabase.channel(`portal-${portal}`).on('postgres_changes',{event:'*',schema:'public',table:'posts'},refresh).subscribe();return()=>{officerSupabase.removeChannel(channel)}},[portal])
+ const login=async(event:React.FormEvent)=>{event.preventDefault();setError('');const {error:loginError}=await officerSupabase.auth.signInWithPassword({email:email.trim().toLowerCase(),password});if(loginError){setError(loginError.message);return}const role=await getOfficerRole();if(role!==(isCC?'cc_officer':'government_officer')){await officerSupabase.auth.signOut();setError('This account does not have access to this officer portal.');return}setLogged(true);await refresh()}
  const forward=async(issue:Issue)=>{try{await forwardToGovernment(issue.id);await refresh();governmentToast(issue.title)}catch(error){alert(error instanceof Error?error.message:'Could not send the case.')}}
  const approvePost=async(issue:Issue)=>{try{await approveCCPost(issue.id);await refresh()}catch(error){alert(error instanceof Error?error.message:'Could not approve post.')}}
  const rejectPost=async(issue:Issue)=>{if(confirm(`Reject and delete “${issue.title}”?`)){try{await rejectCCPost(issue.id);await refresh()}catch(error){alert(error instanceof Error?error.message:'Could not reject post.')}}}
@@ -23,7 +23,7 @@ export default function AdminPortal({portal}:{portal:Portal}){
  const ban=async(issue:Issue)=>{if(confirm(`Ban ${issue.author} and remove their reports?`)){try{if(!issue.authorId)throw new Error('Citizen account was not found.');await banCitizen(issue.authorId);await refresh()}catch(error){alert(error instanceof Error?error.message:'Could not ban this user.')}}}
  const updateStatus=async(issue:Issue,status:Issue['status'])=>{try{await setCCStatus(issue.id,status);await refresh()}catch(error){alert(error instanceof Error?error.message:'Could not update status.')}}
  const approve=async(issue:Issue,description:string,startDate:string)=>{try{await approveGovernmentPost(issue.id,description,startDate);await refresh()}catch(error){alert(error instanceof Error?error.message:'Could not approve this case.')}}
- const logout=async()=>{await supabase.auth.signOut();setLogged(false)}
+ const logout=async()=>{await officerSupabase.auth.signOut();setLogged(false)}
  if(!logged)return <Login title={title} email={email} setEmail={setEmail} password={password} setPassword={setPassword} error={error} login={login}/>
  if(isCC)return <CCExperience items={items} forward={forward} remove={remove} ban={ban} updateStatus={updateStatus} approvePost={approvePost} rejectPost={rejectPost} logout={logout}/>
  return <><button className="govt-approved-shortcut" onClick={()=>window.location.assign('/govt/approved')}>✓ Approved posts</button><button className="govt-settings-shortcut" onClick={()=>window.location.assign('/govt/settings')}>Portal settings</button><GovernmentExperience items={items.filter(i=>i.sentToGovernment)} approve={approve} remove={async issue=>{await removeGovernmentCase(issue.id);await refresh()}} logout={logout}/></>

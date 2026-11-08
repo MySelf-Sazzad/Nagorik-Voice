@@ -8,3 +8,12 @@ if (!supabaseUrl || !supabaseKey) {
 }
 
 export const supabase = createClient(supabaseUrl, supabaseKey)
+
+// Separate client for CC and Government officer portals so officer login NEVER overwrites citizen login
+export const officerSupabase = createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    storageKey: 'nagorik-officer-session',
+    persistSession: true,
+    autoRefreshToken: true
+  }
+})

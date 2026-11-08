@@ -2,7 +2,7 @@ import type { User } from '@supabase/supabase-js'
 import type { AppUser } from '../Auth'
 import type { Issue, Status } from '../data'
 import { initials } from '../Auth'
-import { supabase } from './supabase'
+import { supabase, officerSupabase } from './supabase'
 
 type ProfileRow = { id:string; full_name:string; username:string; city:string; avatar:string; avatar_url?:string|null; cover_url?:string|null; phone?:string|null; address?:string|null; created_at:string; is_banned?:boolean }
 type PostRow = { id:number; title:string; description:string; location:string; district:string; category:string; status:Status; severity:Issue['severity']; image_url?:string|null; latitude?:number|null; longitude?:number|null; supports:number; comments:number; shares:number; sent_to_government:boolean; government_description?:string|null; government_start_date?:string|null; government_approved_at?:string|null; created_at:string; profiles:ProfileRow|null; post_images?:{image_url:string;image_order:number}[]; is_approved?:boolean|null; rejected?:boolean|null }
@@ -230,29 +230,58 @@ export async function uploadProfileImage(userId:string,file:File,kind:'avatar'|'
   return supabase.storage.from('post-images').getPublicUrl(path).data.publicUrl
 }
 
-export async function setCCStatus(postId:number,status:Status){ const {error}=await supabase.rpc('set_cc_post_status',{post_id:postId,new_status:status}); if(error) throw error }
+export async function setCCStatus(postId:number,status:Status){
+  const client = (await officerSupabase.auth.getUser()).data.user ? officerSupabase : supabase
+  const {error}=await client.rpc('set_cc_post_status',{post_id:postId,new_status:status}); if(error) throw error
+}
 export async function approveCCPost(postId:number){
-  const { error: rpcError } = await supabase.rpc('approve_cc_post', { post_id: postId })
+  const client = (await officerSupabase.auth.getUser()).data.user ? officerSupabase : supabase
+  const { error: rpcError } = await client.rpc('approve_cc_post', { post_id: postId })
   if (!rpcError) return
-  const { error } = await supabase.from('posts').update({ is_approved: true, updated_at: new Date().toISOString() }).eq('id', postId)
+  const { error } = await client.from('posts').update({ is_approved: true, updated_at: new Date().toISOString() }).eq('id', postId)
   if (error) console.warn('approveCCPost update error:', error.message)
 }
 export async function rejectCCPost(postId:number){
-  const { error: rpcError } = await supabase.rpc('reject_cc_post', { post_id: postId })
+  const client = (await officerSupabase.auth.getUser()).data.user ? officerSupabase : supabase
+  const { error: rpcError } = await client.rpc('reject_cc_post', { post_id: postId })
   if (!rpcError) return
-  const { error } = await supabase.from('posts').delete().eq('id', postId)
+  const { error } = await client.from('posts').delete().eq('id', postId)
   if (error) throw error
 }
-export async function forwardToGovernment(postId:number){ const {error}=await supabase.rpc('forward_to_government',{post_id:postId}); if(error) throw error }
-export async function approveGovernmentPost(postId:number,description:string,startDate:string){ const {error}=await supabase.rpc('approve_government_post',{post_id:postId,work_description:description,work_start_date:startDate}); if(error) throw error }
-export async function removeGovernmentCase(postId:number){ const {error}=await supabase.rpc('remove_government_case',{post_id:postId}); if(error) throw error }
-export async function removeApproval(postId:number){ const {error}=await supabase.rpc('remove_approval',{post_id:postId}); if(error) throw error }
-export async function deleteCCPost(postId:number){ const {error}=await supabase.rpc('delete_cc_post',{post_id:postId}); if(error) throw error }
-export async function banCitizen(userId:string){ const {error}=await supabase.rpc('ban_citizen',{citizen_id:userId}); if(error) throw error }
+export async function forwardToGovernment(postId:number){
+  const client = (await officerSupabase.auth.getUser()).data.user ? officerSupabase : supabase
+  const {error}=await client.rpc('forward_to_government',{post_id:postId}); if(error) throw error
+}
+export async function approveGovernmentPost(postId:number,description:string,startDate:string){
+  const client = (await officerSupabase.auth.getUser()).data.user ? officerSupabase : supabase
+  const {error}=await client.rpc('approve_government_post',{post_id:postId,work_description:description,work_start_date:startDate}); if(error) throw error
+}
+export async function removeGovernmentCase(postId:number){
+  const client = (await officerSupabase.auth.getUser()).data.user ? officerSupabase : supabase
+  const {error}=await client.rpc('remove_government_case',{post_id:postId}); if(error) throw error
+}
+export async function removeApproval(postId:number){
+  const client = (await officerSupabase.auth.getUser()).data.user ? officerSupabase : supabase
+  const {error}=await client.rpc('remove_approval',{post_id:postId}); if(error) throw error
+}
+export async function deleteCCPost(postId:number){
+  const client = (await officerSupabase.auth.getUser()).data.user ? officerSupabase : supabase
+  const {error}=await client.rpc('delete_cc_post',{post_id:postId}); if(error) throw error
+}
+export async function banCitizen(userId:string){
+  const client = (await officerSupabase.auth.getUser()).data.user ? officerSupabase : supabase
+  const {error}=await client.rpc('ban_citizen',{citizen_id:userId}); if(error) throw error
+}
 
 export async function getOfficerRole(){
-  const { data:{ user } } = await supabase.auth.getUser(); if(!user) return null
-  const { data,error } = await supabase.from('admin_roles').select('role').eq('user_id',user.id).maybeSingle()
+  let { data:{ user } } = await officerSupabase.auth.getUser()
+  if (!user) {
+    const res = await supabase.auth.getUser()
+    user = res.data.user
+  }
+  if(!user) return null
+  const client = (await officerSupabase.auth.getUser()).data.user ? officerSupabase : supabase
+  const { data,error } = await client.from('admin_roles').select('role').eq('user_id',user.id).maybeSingle()
   if(error) throw error
   return data?.role as 'cc_officer'|'government_officer'|undefined
 }
