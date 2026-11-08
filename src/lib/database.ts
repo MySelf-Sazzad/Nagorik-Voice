@@ -5,7 +5,7 @@ import { initials } from '../Auth'
 import { supabase } from './supabase'
 
 type ProfileRow = { id:string; full_name:string; username:string; city:string; avatar:string; avatar_url?:string|null; cover_url?:string|null; phone?:string|null; address?:string|null; created_at:string; is_banned?:boolean }
-type PostRow = { id:number; title:string; description:string; location:string; district:string; category:string; status:Status; severity:Issue['severity']; image_url?:string|null; latitude?:number|null; longitude?:number|null; supports:number; comments:number; shares:number; sent_to_government:boolean; government_description?:string|null; government_start_date?:string|null; government_approved_at?:string|null; created_at:string; profiles:ProfileRow|null; post_images?:{image_url:string;image_order:number}[] }
+type PostRow = { id:number; title:string; description:string; location:string; district:string; category:string; status:Status; severity:Issue['severity']; image_url?:string|null; latitude?:number|null; longitude?:number|null; supports:number; comments:number; shares:number; sent_to_government:boolean; government_description?:string|null; government_start_date?:string|null; government_approved_at?:string|null; created_at:string; profiles:ProfileRow|null; post_images?:{image_url:string;image_order:number}[]; is_approved?:boolean|null; rejected?:boolean|null }
 
 export const formatUser = (authUser:User, profile?:ProfileRow|null):AppUser => {
   const metadata = authUser.user_metadata || {}
@@ -21,7 +21,7 @@ export async function getCurrentUser(){
 }
 
 const toIssue = (row:PostRow):Issue => ({
-  id:row.id, title:row.title, description:row.description, author:row.profiles?.full_name || 'Nagorik Voice citizen', handle:row.profiles?.username || 'citizen', avatar:row.profiles?.avatar || 'NV', time:new Date(row.created_at).toLocaleString(), location:row.location, district:row.district, category:row.category, status:row.status, severity:row.severity, supports:row.supports, comments:row.comments, shares:row.shares, image:row.post_images?.sort((a,b)=>a.image_order-b.image_order)[0]?.image_url || row.image_url || '', images:row.post_images?.sort((a,b)=>a.image_order-b.image_order).map(image=>image.image_url) || (row.image_url?[row.image_url]:[]), lat:row.latitude || 23.81, lng:row.longitude || 90.39, authorId:row.profiles?.id || '', sentToGovernment:row.sent_to_government, governmentApproval:row.government_approved_at ? { description:row.government_description || '', startDate:row.government_start_date || '', approvedAt:row.government_approved_at } : undefined, createdAt:row.created_at
+  id:row.id, title:row.title, description:row.description, author:row.profiles?.full_name || 'Nagorik Voice citizen', handle:row.profiles?.username || 'citizen', avatar:row.profiles?.avatar || 'NV', time:new Date(row.created_at).toLocaleString(), location:row.location, district:row.district, category:row.category, status:row.status, severity:row.severity, supports:row.supports, comments:row.comments, shares:row.shares, image:row.post_images?.sort((a,b)=>a.image_order-b.image_order)[0]?.image_url || row.image_url || '', images:row.post_images?.sort((a,b)=>a.image_order-b.image_order).map(image=>image.image_url) || (row.image_url?[row.image_url]:[]), lat:row.latitude || 23.81, lng:row.longitude || 90.39, authorId:row.profiles?.id || '', sentToGovernment:row.sent_to_government, governmentApproval:row.government_approved_at ? { description:row.government_description || '', startDate:row.government_start_date || '', approvedAt:row.government_approved_at } : undefined, createdAt:row.created_at, isApproved: row.is_approved !== false, rejected: Boolean(row.rejected)
 })
 
 export async function fetchPosts(){
@@ -40,10 +40,32 @@ export async function uploadPostImage(userId:string,file:File){
 
 export async function createPost(user:AppUser,input:Pick<Issue,'title'|'description'|'location'|'district'|'category'|'severity'|'image'|'images'|'lat'|'lng'>){
   const images=input.images?.slice(0,3) || (input.image?[input.image]:[])
-  const { data,error } = await supabase.from('posts').insert({author_id:user.id,title:input.title,description:input.description,location:input.location,district:input.district,category:input.category,severity:input.severity,image_url:images[0] || null,latitude:input.lat,longitude:input.lng}).select('*, profiles(*)').single()
-  if(error) throw error
-  if(images.length){const {error:imageError}=await supabase.from('post_images').insert(images.map((image_url,index)=>({post_id:data.id,image_url,image_order:index+1})));if(imageError)throw imageError}
-  return {...toIssue(data as unknown as PostRow),image:images[0]||'',images}
+  const basePayload = {
+    author_id:user.id,
+    title:input.title,
+    description:input.description,
+    location:input.location,
+    district:input.district,
+    category:input.category,
+    severity:input.severity,
+    image_url:images[0] || null,
+    latitude:input.lat,
+    longitude:input.lng
+  }
+  let data: any = null
+  const resWithApproval = await supabase.from('posts').insert({...basePayload, is_approved: false}).select('*, profiles(*)').maybeSingle()
+  if (!resWithApproval.error && resWithApproval.data) {
+    data = resWithApproval.data
+  } else {
+    const fallback = await supabase.from('posts').insert(basePayload).select('*, profiles(*)').single()
+    if (fallback.error) throw fallback.error
+    data = fallback.data
+  }
+  if(images.length){
+    const {error:imageError}=await supabase.from('post_images').insert(images.map((image_url,index)=>({post_id:data.id,image_url,image_order:index+1})))
+    if(imageError) console.warn('imageError:', imageError)
+  }
+  return {...toIssue(data as unknown as PostRow), isApproved: false, image:images[0]||'', images}
 }
 
 export async function updateProfile(user:AppUser){
@@ -69,6 +91,18 @@ export async function uploadProfileImage(userId:string,file:File,kind:'avatar'|'
 }
 
 export async function setCCStatus(postId:number,status:Status){ const {error}=await supabase.rpc('set_cc_post_status',{post_id:postId,new_status:status}); if(error) throw error }
+export async function approveCCPost(postId:number){
+  const { error: rpcError } = await supabase.rpc('approve_cc_post', { post_id: postId })
+  if (!rpcError) return
+  const { error } = await supabase.from('posts').update({ is_approved: true, updated_at: new Date().toISOString() }).eq('id', postId)
+  if (error) console.warn('approveCCPost update error:', error.message)
+}
+export async function rejectCCPost(postId:number){
+  const { error: rpcError } = await supabase.rpc('reject_cc_post', { post_id: postId })
+  if (!rpcError) return
+  const { error } = await supabase.from('posts').delete().eq('id', postId)
+  if (error) throw error
+}
 export async function forwardToGovernment(postId:number){ const {error}=await supabase.rpc('forward_to_government',{post_id:postId}); if(error) throw error }
 export async function approveGovernmentPost(postId:number,description:string,startDate:string){ const {error}=await supabase.rpc('approve_government_post',{post_id:postId,work_description:description,work_start_date:startDate}); if(error) throw error }
 export async function removeGovernmentCase(postId:number){ const {error}=await supabase.rpc('remove_government_case',{post_id:postId}); if(error) throw error }

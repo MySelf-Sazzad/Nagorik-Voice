@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Home, Compass, Map, Bookmark, Bell, Plus, Search, Menu, MapPin, ThumbsUp, MessageCircle, Share2, MoreHorizontal, X, Image as ImageIcon, Video, ChevronDown, SlidersHorizontal, TrendingUp, CheckCircle2, ShieldCheck, LayoutDashboard, Users, Flag, Settings, ArrowLeft, Clock3, Send, Camera, BarChart3, Navigation, Eye, Languages, LogOut, UserRound, Check, AlertTriangle } from 'lucide-react'
-import { categories, notifications, type Issue, type Status } from './data'
+import { Home, Compass, Map, Bookmark, Bell, Plus, Search, Menu, MapPin, ThumbsUp, MessageCircle, Share2, MoreHorizontal, X, Image as ImageIcon, Video, ChevronDown, SlidersHorizontal, TrendingUp, CheckCircle2, ShieldCheck, LayoutDashboard, Users, Flag, Settings, ArrowLeft, Clock3, Send, Camera, BarChart3, Navigation, Eye, Languages, LogOut, UserRound, Check, AlertTriangle, Locate } from 'lucide-react'
+import { categories, type Issue, type Status } from './data'
+import { getUserNotifications, getReadNotificationIds, saveReadNotificationIds, parseAndSaveMentions } from './lib/notifications'
 import ProfileExperience from './ProfileExperience'
 import ProfileSettingsPage from './ProfileSettingsPage'
 import NotificationCenter from './NotificationCenter'
 import MobileReportModal from './MobileReportModal'
 import SidebarExpanded from './SidebarExpanded'
+import NearbyPage from './NearbyPage'
 import Auth, { type AppUser } from './Auth'
 import { createPost, fetchPosts, getCurrentUser, uploadPostImage } from './lib/database'
 import { supabase } from './lib/supabase'
+import { calculateDistanceKm, formatDistance, getUserLocation, DHAKA_FALLBACK_LOCATION, type UserCoords } from './lib/location'
 
-type Page = 'home'|'explore'|'areas'|'map'|'saved'|'notifications'|'profile'|'settings'|'authority'|'admin'|'details'
+type Page = 'home'|'explore'|'areas'|'map'|'saved'|'notifications'|'profile'|'settings'|'authority'|'admin'|'details'|'nearby'
 
 const statusClass = (s:Status) => 'status '+s.toLowerCase().replaceAll(' ','-')
 const severityClass = (s:string) => 'severity '+s.toLowerCase()
@@ -22,47 +25,76 @@ function ProfilePopover({open,user,close,logout,settings,anchorX}:{open:boolean;
 function App(){
  const [user,setUser]=useState<AppUser|null>(null), [page,setPage]=useState<Page>('home'), [items,setItems]=useState<Issue[]>([]), [authLoading,setAuthLoading]=useState(true)
  const [query,setQuery]=useState(''), [category,setCategory]=useState('All issues'), [createOpen,setCreateOpen]=useState(false), [selected,setSelected]=useState<Issue|null>(null), [toast,setToast]=useState('')
- const [readNotifications,setReadNotifications]=useState<Set<number>>(new Set())
- const unreadCount=Math.max(0,notifications.length-readNotifications.size)
+ const [readNotifications,setReadNotifications]=useState<Set<string>>(new Set())
+ const [notifTrigger,setNotifTrigger]=useState(0)
  const [profileMenu,setProfileMenu]=useState(false)
  const [profileMenuX,setProfileMenuX]=useState(()=>window.innerWidth-48)
  const showToast=(s:string)=>{setToast(s);setTimeout(()=>setToast(''),2600)}
  const saveItems=(next:Issue[])=>setItems(next)
- const filtered=useMemo(()=>items.filter(i=>(category==='All issues'||i.category===category)&&(`${i.title} ${i.description} ${i.location} ${i.author} ${i.category}`.toLowerCase().includes(query.toLowerCase()))),[items,query,category])
+ const approvedItems=useMemo(()=>items.filter(i=>i.isApproved!==false),[items])
+ const filtered=useMemo(()=>approvedItems.filter(i=>(category==='All issues'||i.category===category)&&(`${i.title} ${i.description} ${i.location} ${i.author} ${i.category}`.toLowerCase().includes(query.toLowerCase()))),[approvedItems,query,category])
  const navigate=(p:Page)=>{setPage(p);window.scrollTo({top:0,behavior:'smooth'})}
  const openIssue=(i:Issue)=>{setSelected(i);navigate('details')}
  const toggleSupport=(id:number)=>saveItems(items.map(i=>i.id===id?{...i,supported:!i.supported,supports:i.supports+(i.supported?-1:1)}:i))
  const toggleSave=(id:number)=>{const found=items.find(i=>i.id===id);saveItems(items.map(i=>i.id===id?{...i,saved:!i.saved}:i));showToast(found?.saved?'Removed from saved':'Issue saved for later')}
- const saveReadNotifications=(next:Set<number>)=>setReadNotifications(next)
+
+ useEffect(()=>{
+   if(user){
+     setReadNotifications(getReadNotificationIds(user.id))
+   }
+ },[user])
+
+ useEffect(()=>{
+   const onUpdate=()=>setNotifTrigger(prev=>prev+1)
+   window.addEventListener('nagorik-notifications-updated',onUpdate)
+   return ()=>window.removeEventListener('nagorik-notifications-updated',onUpdate)
+ },[])
+
+ const userNotifications=useMemo(()=>{
+   if(!user) return []
+   return getUserNotifications(user, items)
+ },[user, items, notifTrigger])
+
+ const unreadCount=useMemo(()=>{
+   return userNotifications.filter(n=>!readNotifications.has(n.id)).length
+ },[userNotifications, readNotifications])
+
+ const saveReadNotifications=(next:Set<string>)=>{
+   setReadNotifications(next)
+   if(user){
+     saveReadNotificationIds(user.id, next)
+   }
+ }
+
  const logout=async()=>{await supabase.auth.signOut();setUser(null);setPage('home')}
  const refreshPosts=async()=>{try{setItems(await fetchPosts())}catch(error){console.error(error);showToast('Unable to load live posts. Please refresh.') }}
  useEffect(()=>{if(user){const greeting=document.querySelector('.welcome h1');if(greeting)greeting.textContent=`Good morning, ${user.name.split(' ')[0]}`;document.querySelectorAll<HTMLElement>('.top-actions .avatar,.sidebar-profile .avatar').forEach(avatar=>{avatar.replaceChildren();if(user.avatarUrl){const image=document.createElement('img');image.src=user.avatarUrl;image.alt=`${user.name} profile`;avatar.append(image)}else avatar.textContent=user.avatar})}},[user,page])
- useEffect(()=>{document.querySelector('.top-actions .icon-button')?.classList.toggle('has-dot',unreadCount>0)},[unreadCount])
  useEffect(()=>{Object.keys(localStorage).filter(key=>key.startsWith('nv-')).forEach(key=>localStorage.removeItem(key));const restoreSession=()=>getCurrentUser().then(setUser).catch(()=>setUser(null)).finally(()=>setAuthLoading(false));restoreSession();refreshPosts();const channel=supabase.channel('live-posts').on('postgres_changes',{event:'*',schema:'public',table:'posts'},refreshPosts).subscribe();const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>{if(!session){setUser(null);setAuthLoading(false);return}restoreSession()});return()=>{supabase.removeChannel(channel);subscription.unsubscribe()}},[])
  useEffect(()=>{const openMenu=(event:MouseEvent)=>{const target=event.target as HTMLElement;if(target.closest('.logo')){event.preventDefault();event.stopImmediatePropagation();setPage('home');setProfileMenu(false);window.scrollTo({top:0,behavior:'smooth'});return}const avatar=target.closest('.top-actions .avatar') as HTMLElement|null;if(avatar){event.preventDefault();event.stopImmediatePropagation();const bounds=avatar.getBoundingClientRect();setProfileMenuX(bounds.left+bounds.width/2);setProfileMenu(value=>!value)}else if(!target.closest('.profile-popover'))setProfileMenu(false)};document.addEventListener('click',openMenu,true);return()=>document.removeEventListener('click',openMenu,true)},[])
  if(authLoading)return null
  if(!user)return <Auth onLogin={setUser}/>
  return <div className="app">
-  <header><div className="topbar"><Logo/><div className="global-search"><Search size={19}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search areas, issues or people" aria-label="Search issues"/>{query&&<button className="clear-search" aria-label="Clear search" onClick={()=>setQuery('')}><X size={17}/></button>}</div><div className="top-actions"><button className="language"><Languages size={18}/>বাংলা</button><button className="primary small" onClick={()=>setCreateOpen(true)}><Plus size={18}/> Report issue</button><button className="icon-button has-dot" aria-label="Open notifications" onClick={()=>navigate('notifications')}><Bell size={21}/></button><button className="avatar" aria-label="Open profile" onClick={()=>navigate('profile')}>AR</button></div></div></header>
+  <header><div className="topbar"><Logo/><div className="global-search"><Search size={19}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search areas, issues or people" aria-label="Search issues"/>{query&&<button className="clear-search" aria-label="Clear search" onClick={()=>setQuery('')}><X size={17}/></button>}</div><div className="top-actions"><button className="language"><Languages size={18}/>বাংলা</button><button className="primary small" onClick={()=>setCreateOpen(true)}><Plus size={18}/> Report issue</button><button className={`icon-button ${unreadCount>0?'has-dot':''}`} aria-label="Open notifications" onClick={()=>navigate('notifications')}><Bell size={21}/></button><button className="avatar" aria-label="Open profile" onClick={()=>navigate('profile')}>AR</button></div></div></header>
   <ProfilePopover open={profileMenu} user={user} close={()=>setProfileMenu(false)} settings={()=>navigate('settings')} logout={logout} anchorX={profileMenuX}/>
   <div className="layout"><SidebarExpanded page={page} nav={navigate} create={()=>setCreateOpen(true)} user={user} unreadCount={unreadCount}/><main className={page==='home'?'feed-main':'wide-main'}>
    {page==='home'&&<HomePage user={user} issues={filtered} category={category} setCategory={setCategory} openCreate={()=>setCreateOpen(true)} openIssue={openIssue} support={toggleSupport} save={toggleSave} toast={showToast}/>} 
-   {page==='explore'&&<Explore issues={items} openIssue={openIssue}/>} 
-   {page==='areas'&&<Areas issues={items} openIssue={openIssue}/>} 
-   {page==='map'&&<MapPage issues={items} openIssue={openIssue}/>} 
-   {page==='saved'&&<Listing title="Saved issues" subtitle="Reports you bookmarked to revisit later" issues={items.filter(i=>i.saved)} openIssue={openIssue} empty="You haven't saved an issue yet."/>}
-   {page==='notifications'&&<NotificationCenter read={readNotifications} setRead={saveReadNotifications}/>} {page==='profile'&&<ProfileExperience issues={items} openIssue={openIssue} user={user} updateUser={setUser} openSettings={()=>navigate('settings')}/>} {page==='settings'&&<ProfileSettingsPage user={user} onBack={()=>navigate('profile')} onSave={setUser}/>}
-   {page==='authority'&&<Authority issues={items} saveItems={saveItems} openIssue={openIssue} toast={showToast}/>} 
-   {page==='admin'&&<Admin issues={items}/>} 
-   {page==='details'&&selected&&<Details issue={items.find(i=>i.id===selected.id)||selected} back={()=>navigate('home')} support={toggleSupport} save={toggleSave} toast={showToast}/>} 
-  </main>{page==='home'&&<RightRail issues={items} openIssue={openIssue}/>}</div>
-  <MobileNav page={page} nav={navigate} create={()=>setCreateOpen(true)}/>
-  {createOpen&&<MobileReportModal close={()=>setCreateOpen(false)} user={user} publish={async(draft,files)=>{try{const images=await Promise.all(files.map(file=>uploadPostImage(user.id,file)));const issue=await createPost(user,{...draft,image:images[0]||'',images});saveItems([issue,...items]);setCreateOpen(false);setCategory('All issues');navigate('home');showToast('Your issue is live and ready for City Corporation review.')}catch(error){showToast(error instanceof Error?error.message:'Could not publish your report.')}}}/>} 
+   {page==='explore'&&<Explore issues={approvedItems} openIssue={openIssue}/>} 
+   {page==='nearby'&&<NearbyPage issues={approvedItems} openIssue={openIssue} supportIssue={toggleSupport} saveIssue={toggleSave} toast={showToast}/>} 
+   {page==='areas'&&<Areas issues={approvedItems} openIssue={openIssue}/>} 
+   {page==='map'&&<MapPage issues={approvedItems} openIssue={openIssue}/>} 
+   {page==='saved'&&<Listing title="Saved issues" subtitle="Reports you bookmarked to revisit later" issues={approvedItems.filter(i=>i.saved)} openIssue={openIssue} empty="You haven't saved an issue yet."/>}
+   {page==='notifications'&&<NotificationCenter notifications={userNotifications} read={readNotifications} setRead={saveReadNotifications} onSelectIssue={(issueId)=>{const found=items.find(i=>i.id===issueId);if(found)openIssue(found)}}/>} {page==='profile'&&<ProfileExperience issues={items} openIssue={openIssue} user={user} updateUser={setUser} openSettings={()=>navigate('settings')}/>} {page==='settings'&&<ProfileSettingsPage user={user} onBack={()=>navigate('profile')} onSave={setUser}/>}
+   {page==='authority'&&<Authority issues={approvedItems} saveItems={saveItems} openIssue={openIssue} toast={showToast}/>} 
+   {page==='admin'&&<Admin issues={approvedItems}/>} 
+   {page==='details'&&selected&&<Details issue={items.find(i=>i.id===selected.id)||selected} user={user} back={()=>navigate('home')} support={toggleSupport} save={toggleSave} toast={showToast}/>} 
+  </main>{page==='home'&&<RightRail issues={approvedItems} openIssue={openIssue}/>}</div>
+  <MobileNav page={page} nav={navigate} create={()=>setCreateOpen(true)} unreadCount={unreadCount}/>
+  {createOpen&&<MobileReportModal close={()=>setCreateOpen(false)} user={user} publish={async(draft,files)=>{try{const images=await Promise.all(files.map(file=>uploadPostImage(user.id,file)));const issue=await createPost(user,{...draft,image:images[0]||'',images});saveItems([issue,...items]);setCreateOpen(false);setCategory('All issues');navigate('home');showToast('Report submitted! Pending City Corporation review before publication.')}catch(error){showToast(error instanceof Error?error.message:'Could not publish your report.')}}}/>} 
   {toast&&<div className="toast"><CheckCircle2 size={19}/>{toast}</div>}
  </div>
 }
 
-function Sidebar({page,nav}:{page:Page;nav:(p:Page)=>void}){const links:[Page,any,string][]=[['home',Home,'Home'],['explore',Compass,'Explore'],['areas',MapPin,'Browse areas'],['map',Map,'Issue map'],['saved',Bookmark,'Saved'],['notifications',Bell,'Notifications'],['profile',UserRound,'My profile']];return <aside className="sidebar"><nav>{links.map(([p,I,l])=><button className={page===p?'active':''} onClick={()=>nav(p)} key={p}><I size={21}/>{l}{p==='notifications'&&<span className="nav-count">3</span>}</button>)}</nav><div className="side-divider"/><p className="side-label">WORKSPACE</p><button className={page==='authority'?'active':''} onClick={()=>nav('authority')}><ShieldCheck size={21}/>Authority portal</button><button className={page==='admin'?'active':''} onClick={()=>nav('admin')}><LayoutDashboard size={21}/>Admin panel</button><div className="community-card"><div className="community-icon"><ShieldCheck/></div><b>Community first</b><p>Keep every report factual, respectful and focused on public issues.</p><a>Read guidelines →</a></div><p className="copyright">© 2026 Nagorik Voice<br/>Independent civic platform</p></aside>}
+function Sidebar({page,nav,unreadCount=0}:{page:Page;nav:(p:Page)=>void;unreadCount?:number}){const links:[Page,any,string][]=[['home',Home,'Home'],['explore',Compass,'Explore'],['areas',MapPin,'Browse areas'],['map',Map,'Issue map'],['saved',Bookmark,'Saved'],['notifications',Bell,'Notifications'],['profile',UserRound,'My profile']];return <aside className="sidebar"><nav>{links.map(([p,I,l])=><button className={page===p?'active':''} onClick={()=>nav(p)} key={p}><I size={21}/>{l}{p==='notifications'&&unreadCount>0&&<span className="nav-count">{unreadCount}</span>}</button>)}</nav><div className="side-divider"/><p className="side-label">WORKSPACE</p><button className={page==='authority'?'active':''} onClick={()=>nav('authority')}><ShieldCheck size={21}/>Authority portal</button><button className={page==='admin'?'active':''} onClick={()=>nav('admin')}><LayoutDashboard size={21}/>Admin panel</button><div className="community-card"><div className="community-icon"><ShieldCheck/></div><b>Community first</b><p>Keep every report factual, respectful and focused on public issues.</p><a>Read guidelines →</a></div><p className="copyright">© 2026 Nagorik Voice<br/>Independent civic platform</p></aside>}
 
 function HomePage({user,issues,category,setCategory,openCreate,openIssue,support,save,toast}:{user:AppUser;issues:Issue[];category:string;setCategory:(s:string)=>void;openCreate:()=>void;openIssue:(i:Issue)=>void;support:(id:number)=>void;save:(id:number)=>void;toast:(s:string)=>void}){const [newest,setNewest]=useState(true);const feed=[...issues].sort((a,b)=>newest?b.id-a.id:b.supports-a.supports);return <><section className="welcome"><div><span className="eyebrow">YOUR COMMUNITY FEED</span><h1>Good morning, Arafat</h1><p>See what your community is talking about today.</p></div><div className="weather"><span>Dhaka</span><b>31°</b><small>Partly cloudy</small></div></section><button className="quick-post" onClick={openCreate}><span className="avatar">{user.avatarUrl?<img src={user.avatarUrl} alt=""/>:user.avatar}</span><span>Report a problem in your area...</span><span className="quick-action"><ImageIcon size={19}/> Photo</span><span className="quick-action"><MapPin size={19}/> Location</span></button><div className="topic-row">{categories.slice(0,7).map(c=><button key={c} className={category===c?'active':''} onClick={()=>setCategory(c)}>{c}</button>)}</div><div className="feed-title"><div><h2>{category==='All issues'?'Community reports':category}</h2><p>{issues.length} issues in your feed</p></div><button onClick={()=>{setNewest(!newest);toast(newest?'Sorted by community support':'Sorted by newest')}}><SlidersHorizontal size={17}/>{newest?'Newest first':'Most supported'}</button></div>{feed.length?feed.map(i=><IssueCard key={i.id} issue={i} open={()=>openIssue(i)} support={()=>support(i.id)} save={()=>save(i.id)} share={()=>{navigator.clipboard?.writeText(location.href);toast('Link copied to clipboard')}}/>):<Empty icon={Search} text="No issues match your search."/>}</>}
 
@@ -74,9 +106,139 @@ function Explore({issues,openIssue}:{issues:Issue[];openIssue:(i:Issue)=>void}){
 
 function Areas({issues,openIssue}:{issues:Issue[];openIssue:(i:Issue)=>void}){const [area,setArea]=useState('Dhaka'),[following,setFollowing]=useState(false),areaIssues=issues.filter(issue=>issue.district===area),reported=areaIssues.length,inProgress=areaIssues.filter(issue=>issue.status==='In Progress').length,resolved=areaIssues.filter(issue=>issue.status==='Resolved').length;return <div className="page"><PageHead eyebrow="LOCATION DIRECTORY" title="What’s happening near you?" copy="Choose an area to discover, follow and support local civic reports."/><div className="area-select"><div><label>Division</label><select><option>Dhaka Division</option><option>Chattogram Division</option></select></div><div><label>District</label><select value={area} onChange={e=>setArea(e.target.value)}><option>Dhaka</option><option>Chattogram</option></select></div><div><label>Area / Thana</label><select><option>All areas</option><option>Uttara</option><option>Mirpur</option></select></div><button className="primary" onClick={()=>document.getElementById('area-reports')?.scrollIntoView({behavior:'smooth',block:'start'})}>View reports</button></div><div className="area-hero"><div><span>AREA OVERVIEW</span><h2>{area} District</h2><p>Follow this area to get notified about new reports and updates.</p><button onClick={()=>setFollowing(!following)}><Bell size={17}/>{following?'Following area':'Follow area'}</button></div><div className="area-numbers"><Stat value={String(reported)} label="Reported"/><Stat value={String(inProgress)} label="In progress"/><Stat value={String(resolved)} label="Resolved"/></div></div><div id="area-reports"><Listing title={`Latest in ${area}`} subtitle="Recently reported community issues" issues={areaIssues} openIssue={openIssue}/></div></div>}
 
-function MapPage({issues,openIssue}:{issues:Issue[];openIssue:(i:Issue)=>void}){const [active,setActive]=useState<Issue|null>(issues[0]),[category,setCategory]=useState('All categories'),[status,setStatus]=useState('All statuses'),[severity,setSeverity]=useState('All severity');const visible=issues.filter(issue=>(category==='All categories'||issue.category===category)&&(status==='All statuses'||issue.status===status)&&(severity==='All severity'||issue.severity===severity));const cycle=(value:string,all:string,options:string[])=>options[(options.indexOf(value)+1)%options.length]||all;return <div className="page map-page"><PageHead eyebrow="LIVE ISSUE MAP" title="Reports across Bangladesh" copy="Explore public problems by location, category and current status."/><div className="map-toolbar"><button onClick={()=>setCategory(cycle(category,'All categories',['All categories',...categories.slice(1)]))}><SlidersHorizontal size={17}/>{category}</button><button onClick={()=>setStatus(cycle(status,'All statuses',['All statuses','Reported','Acknowledged','Under Review','In Progress','Resolved']))}>{status}<ChevronDown size={16}/></button><button onClick={()=>setSeverity(cycle(severity,'All severity',['All severity','Low','Medium','High','Critical']))}>{severity}<ChevronDown size={16}/></button><span>{visible.length} visible reports</span></div><div className="fake-map live-map"><iframe className="live-map-frame" title="OpenStreetMap of Dhaka" src="https://www.openstreetmap.org/export/embed.html?bbox=90.315%2C23.735%2C90.45%2C23.9&amp;layer=mapnik"/>{visible.map((i,n)=><button key={i.id} className={`marker m${n+1} ${active?.id===i.id?'active':''}`} aria-label={`View ${i.title}`} onClick={()=>setActive(i)}><MapPin/><span>{i.category}</span></button>)}{active&&visible.some(issue=>issue.id===active.id)&&<div className="map-popup"><img src={active.image} alt=""/><div><span className={statusClass(active.status)}>{active.status}</span><h3>{active.title}</h3><p><MapPin size={13}/>{active.location}</p><button onClick={()=>openIssue(active)}>View issue →</button></div></div>}</div></div>}
+function MapPage({issues,openIssue}:{issues:Issue[];openIssue:(i:Issue)=>void}){
+  const [active,setActive]=useState<Issue|null>(issues[0]||null)
+  const [category,setCategory]=useState('All categories')
+  const [statusFilter,setStatusFilter]=useState('All statuses')
+  const [severity,setSeverity]=useState('All severity')
+  const [radiusFilter,setRadiusFilter]=useState<number|'all'>('all')
+  const [userLocation,setUserLocation]=useState<UserCoords>(DHAKA_FALLBACK_LOCATION)
+  const [locating,setLocating]=useState(false)
+  const [locationGranted,setLocationGranted]=useState(false)
 
-function Notifications(){return <div className="page narrow-page"><PageHead eyebrow="STAY UPDATED" title="Notifications" copy="Updates from your reports, followed issues and community."/><div className="notification-tabs"><button className="active">All</button><button>Mentions</button><button>Updates</button></div><div className="notification-list">{notifications.map((n,i)=><div className={`notification ${i<3?'unread':''}`} key={n.text}><div className={`notify-icon ${n.icon}`}>{n.icon==='support'?<ThumbsUp/>:n.icon==='comment'?<MessageCircle/>:n.icon==='resolved'?<CheckCircle2/>:<Clock3/>}</div><div><b>{n.text}</b><p>{n.detail}</p><small>{n.time} ago</small></div>{i<3&&<i/>}</div>)}</div></div>}
+  // Request location permission when Map is opened
+  useEffect(()=>{
+    setLocating(true)
+    getUserLocation().then(loc => {
+      setUserLocation(loc)
+      if (!loc.isSimulated) setLocationGranted(true)
+    }).finally(()=>setLocating(false))
+  },[])
+
+  const minLng = userLocation.lng - 0.05
+  const maxLng = userLocation.lng + 0.05
+  const minLat = userLocation.lat - 0.04
+  const maxLat = userLocation.lat + 0.04
+
+  // Filter approved issues by category, status, severity and radius
+  const visible = useMemo(() => {
+    return issues.filter(issue => {
+      const matchCat = category === 'All categories' || issue.category === category
+      const matchStatus = statusFilter === 'All statuses' || issue.status === statusFilter
+      const matchSev = severity === 'All severity' || issue.severity === severity
+      const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, issue.lat || 23.81, issue.lng || 90.39)
+      const matchRad = radiusFilter === 'all' || dist <= radiusFilter
+      return matchCat && matchStatus && matchSev && matchRad
+    })
+  }, [issues, category, statusFilter, severity, radiusFilter, userLocation])
+
+  const cycle=(value:string,all:string,options:string[])=>options[(options.indexOf(value)+1)%options.length]||all;
+  const cycleRadius=()=>{
+    const opts:[number|'all', string][] = [['all','All distances'],[0.2,'200m radius'],[1,'1 km radius'],[5,'5 km radius'],[10,'10 km radius']]
+    const currIdx = opts.findIndex(o => o[0] === radiusFilter)
+    setRadiusFilter(opts[(currIdx + 1) % opts.length][0])
+  }
+
+  const radiusLabel = radiusFilter === 'all' ? 'All distances' : radiusFilter === 0.2 ? 'Within 200m' : `Within ${radiusFilter} km`
+
+  return (
+    <div className="page map-page">
+      <PageHead eyebrow="LIVE ISSUE MAP" title="Reports across Bangladesh" copy="Explore approved public civic problems on the live interactive map with real GPS location."/>
+
+      {!locationGranted && (
+        <div className="location-permission-box">
+          <div>
+            <Compass size={18} />
+            <span>Map is requesting your location permission to show reports around you.</span>
+          </div>
+          <button type="button" onClick={() => {
+            setLocating(true)
+            getUserLocation().then(loc => {
+              setUserLocation(loc)
+              if (!loc.isSimulated) setLocationGranted(true)
+            }).finally(()=>setLocating(false))
+          }} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <Locate size={15}/>
+            {locating ? 'Requesting GPS…' : 'Enable Live Location'}
+          </button>
+        </div>
+      )}
+
+      <div className="map-toolbar">
+        <button onClick={()=>setCategory(cycle(category,'All categories',['All categories',...categories.slice(1)]))}><SlidersHorizontal size={17}/>{category}</button>
+        <button onClick={()=>setStatusFilter(cycle(statusFilter,'All statuses',['All statuses','Reported','Acknowledged','Under Review','In Progress','Resolved']))}>{statusFilter}<ChevronDown size={16}/></button>
+        <button onClick={()=>setSeverity(cycle(severity,'All severity',['All severity','Low','Medium','High','Critical']))}>{severity}<ChevronDown size={16}/></button>
+        <button onClick={cycleRadius} style={{ background: radiusFilter !== 'all' ? '#0869cf' : undefined, color: radiusFilter !== 'all' ? '#fff' : undefined }}>
+          <Navigation size={15}/>{radiusLabel}
+        </button>
+        <span>{visible.length} approved reports</span>
+      </div>
+
+      <div className="fake-map live-map">
+        <iframe
+          className="live-map-frame"
+          title="OpenStreetMap of Dhaka"
+          src={`https://www.openstreetmap.org/export/embed.html?bbox=${minLng}%2C${minLat}%2C${maxLng}%2C${maxLat}&layer=mapnik&marker=${userLocation.lat}%2C${userLocation.lng}`}
+        />
+
+        {/* Live User Location Pin */}
+        <div className="live-user-dot" style={{ left: '50%', top: '50%' }}>
+          <div className="pulse-ring" />
+          <div className="center-dot" />
+          <div className="user-label" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <Locate size={12}/>
+            <span>You are here ({userLocation.lat.toFixed(3)}, {userLocation.lng.toFixed(3)})</span>
+          </div>
+        </div>
+
+        {/* Approved Issue Markers */}
+        {visible.map((i)=>{
+          const x = Math.max(5, Math.min(95, (( (i.lng || 90.39) - minLng) / (maxLng - minLng)) * 100))
+          const y = Math.max(8, Math.min(92, ((maxLat - (i.lat || 23.81)) / (maxLat - minLat)) * 100))
+          return (
+            <button
+              key={i.id}
+              className={`marker ${active?.id===i.id?'active':''}`}
+              style={{ left: `${x}%`, top: `${y}%` }}
+              aria-label={`View ${i.title}`}
+              onClick={()=>setActive(i)}
+            >
+              <MapPin/>
+              <span>{i.category}</span>
+            </button>
+          )
+        })}
+
+        {active && visible.some(issue=>issue.id===active.id) && (
+          <div className="map-popup">
+            {active.image && <img src={active.image} alt=""/>}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                <span className={statusClass(active.status)}>{active.status}</span>
+                <span className="distance-pill" style={{ padding: '2px 7px', fontSize: '10px' }}>
+                  {formatDistance(calculateDistanceKm(userLocation.lat, userLocation.lng, active.lat || 23.81, active.lng || 90.39))}
+                </span>
+              </div>
+              <h3>{active.title}</h3>
+              <p><MapPin size={13}/>{active.location}</p>
+              <button onClick={()=>openIssue(active)}>View issue →</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function Profile({issues,openIssue}:{issues:Issue[];openIssue:(i:Issue)=>void}){return <div className="page profile-page"><div className="cover"><div className="cover-pattern"/><button><Camera size={16}/> Edit cover</button></div><div className="profile-header"><div className="avatar profile-avatar">AR</div><div className="profile-copy"><h1>Arafat Rahman</h1><p>@arafat.r · Dhaka, Bangladesh</p><span>Community member reporting issues that matter to our neighbourhoods.</span></div><button className="outline">Edit profile</button></div><div className="profile-stats"><Stat value="12" label="Reports"/><Stat value="1,284" label="Supports received"/><Stat value="4" label="Resolved reports"/><Stat value="8" label="Areas followed"/></div><div className="profile-tabs"><button className="active">Reports</button><button>Media</button><button>Resolved</button><button>About</button></div><Listing title="My recent reports" subtitle="Your published civic issues" issues={issues.slice(0,2)} openIssue={openIssue}/></div>}
 
@@ -84,7 +246,40 @@ function Authority({issues,saveItems,openIssue,toast}:{issues:Issue[];saveItems:
 
 function Admin({issues}:{issues:Issue[]}){return <div className="page"><div className="dashboard-head"><div><span className="eyebrow">PLATFORM CONTROL</span><h1>Admin overview</h1><p>Monitor community activity, moderation and platform health.</p></div><button className="primary"><Settings size={17}/> Platform settings</button></div><div className="dashboard-stats"><DashStat icon={Users} value="8,492" label="Total users" color="blue"/><DashStat icon={Flag} value="1,284" label="Total issues" color="orange"/><DashStat icon={CheckCircle2} value="327" label="Resolved" color="green"/><DashStat icon={AlertTriangle} value="14" label="Moderation queue" color="red"/></div><div className="dashboard-grid"><div className="panel wide"><div className="panel-head"><div><h3>Recent platform activity</h3><p>Reports and account events requiring review</p></div></div>{issues.map((i,n)=><div className="admin-activity"><span className={`activity-dot ${n===1?'red':''}`}/><div><b>{n===1?'Content flagged for review':`New issue reported in ${i.district}`}</b><p>{i.title}</p></div><small>{i.time}</small><button>Review</button></div>)}</div><div className="panel"><h3>Moderation health</h3><div className="donut"><div><b>96%</b><span>Healthy</span></div></div><div className="legend"><span><i className="green"/>Clean content <b>1,240</b></span><span><i className="orange"/>Pending review <b>14</b></span><span><i className="red"/>Removed <b>30</b></span></div></div></div></div>}
 
-function Details({issue,back,support,save,toast}:{issue:Issue;back:()=>void;support:(id:number)=>void;save:(id:number)=>void;toast:(s:string)=>void}){const [comments,setComments]=useState([{name:'Nusrat Jahan',avatar:'NJ',text:'I use this road every day. Thank you for reporting it — this needs urgent attention.',time:'1 hour ago'},{name:'Imran Hossain',avatar:'IH',text:'The authority placed warning signs this morning. Hopefully repairs will begin soon.',time:'24 min ago'}]),[comment,setComment]=useState('');return <div className="page detail-page"><button className="back" onClick={back}><ArrowLeft size={18}/> Back to feed</button><article className="detail-card"><div className="detail-top"><div className="badges"><span className="category">{issue.category}</span><span className={statusClass(issue.status)}>{issue.status}</span><span className={severityClass(issue.severity)}>{issue.severity}</span></div><button><MoreHorizontal/></button></div><h1>{issue.title}</h1><div className="post-head"><div className="avatar large">{issue.avatar}</div><div className="author"><b>{issue.author}</b><span>@{issue.handle} · {issue.time}</span></div></div><div className="location-line"><MapPin size={16}/>{issue.location}</div><p className="detail-copy">{issue.description}</p><img className="detail-image" src={issue.image}/><div className="engagement"><span><b>{issue.supports}</b> community supports</span><span>{issue.comments} comments · {issue.shares} shares</span></div><div className="post-actions big"><button className={issue.supported?'supported':''} onClick={()=>support(issue.id)}><ThumbsUp/>Support this issue</button><button><Share2/>Share</button><button className={issue.saved?'saved':''} onClick={()=>save(issue.id)}><Bookmark/>Save</button></div></article><div className="detail-columns"><section className="panel"><h2>Issue progress</h2><div className="timeline">{['Issue reported','Authority acknowledged','Under review','Work started','Resolved'].map((s,n)=><div className={n<=3?'done':''}><i>{n<=3?<Check size={14}/>:''}</i><div><b>{s}</b><span>{n===0?'10 Aug 2026':n===1?'12 Aug 2026':n===2?'13 Aug 2026':n===3?'16 Aug 2026':'Pending'}</span></div></div>)}</div></section><section className="panel map-mini"><h2>Reported location</h2><div><MapPin/><span>23.8728, 90.3959</span></div><p>{issue.location}</p><button>Open full map</button></section></div><section className="panel comments"><h2>Community discussion <span>{comments.length}</span></h2><div className="comment-input"><span className="avatar">AR</span><input placeholder="Add a constructive comment..." value={comment} onChange={e=>setComment(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&comment){setComments([...comments,{name:'Arafat Rahman',avatar:'AR',text:comment,time:'Just now'}]);setComment('')}}}/><button onClick={()=>{if(comment){setComments([...comments,{name:'Arafat Rahman',avatar:'AR',text:comment,time:'Just now'}]);setComment('');toast('Comment posted')}}}><Send size={18}/></button></div>{comments.map(c=><div className="comment"><span className="avatar">{c.avatar}</span><div><div><b>{c.name}</b><small>{c.time}</small><p>{c.text}</p></div><button>Support</button><button>Reply</button></div></div>)}</section></div>}
+function Details({issue,user,back,support,save,toast}:{issue:Issue;user:AppUser|null;back:()=>void;support:(id:number)=>void;save:(id:number)=>void;toast:(s:string)=>void}){
+  const [comments,setComments]=useState<{name:string;avatar:string;text:string;time:string}[]>(()=>{
+    try{
+      const saved=localStorage.getItem(`nagorik-comments-${issue.id}`)
+      if(saved) return JSON.parse(saved)
+    }catch{}
+    return [
+      {name:'Nusrat Jahan',avatar:'NJ',text:'I use this road every day. Thank you for reporting it — this needs urgent attention.',time:'1 hour ago'},
+      {name:'Imran Hossain',avatar:'IH',text:'The authority placed warning signs this morning. Hopefully repairs will begin soon.',time:'24 min ago'}
+    ]
+  })
+  const [comment,setComment]=useState('')
+
+  const postComment=()=>{
+    if(!comment.trim()) return
+    const authorName=user?.name||'Citizen'
+    const authorAvatar=user?.avatar||'NV'
+    const newComment={name:authorName,avatar:authorAvatar,text:comment.trim(),time:'Just now'}
+    const updated=[...comments,newComment]
+    setComments(updated)
+    try{
+      localStorage.setItem(`nagorik-comments-${issue.id}`,JSON.stringify(updated))
+    }catch{}
+    const detected=parseAndSaveMentions(comment.trim(),authorName,issue.id,issue.title,'comment')
+    if(detected.length>0){
+      toast(`Comment posted and notified @${detected.join(', @')}`)
+    }else{
+      toast('Comment posted')
+    }
+    setComment('')
+  }
+
+  return <div className="page detail-page"><button className="back" onClick={back}><ArrowLeft size={18}/> Back to feed</button><article className="detail-card"><div className="detail-top"><div className="badges"><span className="category">{issue.category}</span><span className={statusClass(issue.status)}>{issue.status}</span><span className={severityClass(issue.severity)}>{issue.severity}</span></div><button><MoreHorizontal/></button></div><h1>{issue.title}</h1><div className="post-head"><div className="avatar large">{issue.avatar}</div><div className="author"><b>{issue.author}</b><span>@{issue.handle} · {issue.time}</span></div></div><div className="location-line"><MapPin size={16}/>{issue.location}</div><p className="detail-copy">{issue.description}</p><img className="detail-image" src={issue.image}/><div className="engagement"><span><b>{issue.supports}</b> community supports</span><span>{issue.comments} comments · {issue.shares} shares</span></div><div className="post-actions big"><button className={issue.supported?'supported':''} onClick={()=>support(issue.id)}><ThumbsUp/>Support this issue</button><button><Share2/>Share</button><button className={issue.saved?'saved':''} onClick={()=>save(issue.id)}><Bookmark/>Save</button></div></article><div className="detail-columns"><section className="panel"><h2>Issue progress</h2><div className="timeline">{['Issue reported','Authority acknowledged','Under review','Work started','Resolved'].map((s,n)=><div className={n<=3?'done':''}><i>{n<=3?<Check size={14}/>:''}</i><div><b>{s}</b><span>{n===0?'10 Aug 2026':n===1?'12 Aug 2026':n===2?'13 Aug 2026':n===3?'16 Aug 2026':'Pending'}</span></div></div>)}</div></section><section className="panel map-mini"><h2>Reported location</h2><div><MapPin/><span>23.8728, 90.3959</span></div><p>{issue.location}</p><button>Open full map</button></section></div><section className="panel comments"><h2>Community discussion <span>{comments.length}</span></h2><div className="comment-input"><span className="avatar">{user?.avatar||'NV'}</span><input placeholder="Add a constructive comment... (e.g. @username to mention)" value={comment} onChange={e=>setComment(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&comment){postComment()}}}/><button onClick={postComment} aria-label="Send comment"><Send size={18}/></button></div>{comments.map((c,idx)=><div className="comment" key={idx}><span className="avatar">{c.avatar}</span><div><div><b>{c.name}</b><small>{c.time}</small><p>{c.text.split(/(@[a-zA-Z0-9_.-]+)/g).map((part,i)=>part.startsWith('@')?<span key={i} style={{color:'#1d4ed8',fontWeight:700,background:'#eff6ff',padding:'1px 5px',borderRadius:'4px'}}>{part}</span>:part)}</p></div><button onClick={()=>setComment(`@${c.name.toLowerCase().replace(/[^a-z0-9]+/g,'.')} `)}>Mention</button><button onClick={()=>setComment(`@${c.name.toLowerCase().replace(/[^a-z0-9]+/g,'.')} `)}>Reply</button></div></div>)}</section></div>
+}
 
 function CreateModal({close,publish}:{close:()=>void;publish:(i:Issue)=>void}){const [step,setStep]=useState(1),[title,setTitle]=useState(''),[description,setDescription]=useState(''),[cat,setCat]=useState('Broken Road'),[severity,setSeverity]=useState<'Low'|'Medium'|'High'|'Critical'>('Medium'),[area,setArea]=useState('Uttara'),[road,setRoad]=useState(''),[preview,setPreview]=useState(''),[agreed,setAgreed]=useState(false);const fileRef=useRef<HTMLInputElement>(null);const valid=title.trim()&&description.trim()&&area;const submit=()=>{if(!valid||!agreed)return;publish({id:Date.now(),title,description,author:'Arafat Rahman',handle:'arafat.r',avatar:'AR',time:'Just now',location:`${area}${road?` → ${road}`:''}, Dhaka`,district:'Dhaka',category:cat,status:'Reported',severity,supports:0,comments:0,shares:0,image:preview||'https://images.unsplash.com/photo-1480714378408-67cf0d13bc1b?auto=format&fit=crop&w=1200&q=85',lat:23.81,lng:90.39})};return <div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&close()}><div className="modal"><div className="modal-head"><div><span>REPORT A CIVIC ISSUE</span><h2>{step===1?'Tell us what happened':step===2?'Add evidence & location':'Review and publish'}</h2></div><button onClick={close}><X/></button></div><div className="steps"><div className="active"><i>1</i><span>Issue</span></div><hr className={step>=2?'active':''}/><div className={step>=2?'active':''}><i>2</i><span>Location</span></div><hr className={step>=3?'active':''}/><div className={step>=3?'active':''}><i>3</i><span>Review</span></div></div><div className="modal-body">{step===1&&<><div className="rule-note"><ShieldCheck/><div><b>Keep it civic and factual</b><p>Only publish genuine public or community issues. Political, promotional, offensive or unrelated content is not allowed.</p></div></div><Field label="Issue title" required><input value={title} maxLength={100} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Large pothole causing traffic problems"/><small>{title.length}/100</small></Field><Field label="Description" required><textarea value={description} onChange={e=>setDescription(e.target.value)} placeholder="Describe the problem, how long it has existed and who it affects..."/><small>{description.length}/800</small></Field><div className="form-grid"><Field label="Category" required><select value={cat} onChange={e=>setCat(e.target.value)}>{categories.slice(1).map(c=><option>{c}</option>)}</select></Field><Field label="Severity"><select value={severity} onChange={e=>setSeverity(e.target.value as any)}><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></Field></div></>}{step===2&&<><Field label="Photos or video"><div className="upload" onClick={()=>fileRef.current?.click()}>{preview?<img src={preview}/>:<><div><ImageIcon/><Video/></div><b>Add evidence of the issue</b><p>Click to select an image · Preview stored locally</p></>}<input ref={fileRef} hidden type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];if(f)setPreview(URL.createObjectURL(f))}}/></div></Field><div className="form-grid"><Field label="District" required><select><option>Dhaka</option><option>Chattogram</option><option>Sylhet</option><option>Rajshahi</option></select></Field><Field label="Area / Thana" required><select value={area} onChange={e=>setArea(e.target.value)}><option>Uttara</option><option>Mirpur</option><option>Mohammadpur</option><option>Banani</option><option>Dhanmondi</option></select></Field><Field label="Sector / Block"><input placeholder="e.g. Sector 4"/></Field><Field label="Road / Street"><input value={road} onChange={e=>setRoad(e.target.value)} placeholder="e.g. Road 12"/></Field></div><div className="pin-box"><div><MapPin/><span>Pin set near {area}, Dhaka</span></div><button><Navigation size={16}/> Use my location</button></div></>}{step===3&&<><div className="review-card">{preview&&<img src={preview}/>}<span className="category">{cat}</span><span className={severityClass(severity)}>{severity}</span><h3>{title||'Untitled issue'}</h3><p>{description}</p><div className="location-line"><MapPin size={15}/>{area}{road?` → ${road}`:''}, Dhaka</div></div><label className="check-row"><input type="checkbox" checked={agreed} onChange={e=>setAgreed(e.target.checked)}/><span>I confirm this is a genuine public/community issue and the information is accurate to the best of my knowledge.</span></label></>}</div><div className="modal-foot">{step>1?<button className="outline" onClick={()=>setStep(step-1)}>Back</button>:<span/>}{step<3?<button className="primary" disabled={step===1&&!valid} onClick={()=>setStep(step+1)}>Continue</button>:<button className="primary" disabled={!agreed||!valid} onClick={submit}><Send size={17}/> Publish issue</button>}</div></div></div>}
 
@@ -95,5 +290,5 @@ function DashStat({icon:I,value,label,color}:{icon:any;value:string;label:string
 function ChartPanel(){return <div className="panel"><div className="panel-head"><div><h3>Reports by category</h3><p>Last 30 days</p></div></div><div className="bars">{[['Road',78],['Waste',62],['Drainage',53],['Traffic',42],['Safety',31]].map(([n,v])=><div><span>{n}</span><i><b style={{width:`${v}%`}}/></i><strong>{v}</strong></div>)}</div></div>}
 function Field({label,required,children}:{label:string;required?:boolean;children:any}){return <label className="field"><b>{label}{required&&<em>*</em>}</b><div>{children}</div></label>}
 function Empty({icon:I,text}:{icon:any;text:string}){return <div className="empty"><I/><h3>{text}</h3><p>Try changing your filters or report a new civic issue.</p></div>}
-function MobileNav({page,nav,create}:{page:Page;nav:(p:Page)=>void;create:()=>void}){return <nav className="mobile-nav"><button className={page==='home'?'active':''} onClick={()=>nav('home')}><Home/><span>Home</span></button><button className={page==='explore'?'active':''} onClick={()=>nav('explore')}><Compass/><span>Explore</span></button><button className="mobile-create" onClick={create}><Plus/></button><button className={page==='notifications'?'active':''} onClick={()=>nav('notifications')}><Bell/><span>Alerts</span><i/></button><button className={page==='profile'?'active':''} onClick={()=>nav('profile')}><UserRound/><span>Profile</span></button></nav>}
+function MobileNav({page,nav,create,unreadCount=0}:{page:Page;nav:(p:Page)=>void;create:()=>void;unreadCount?:number}){return <nav className="mobile-nav"><button className={page==='home'?'active':''} onClick={()=>nav('home')}><Home/><span>Home</span></button><button className={page==='explore'?'active':''} onClick={()=>nav('explore')}><Compass/><span>Explore</span></button><button className="mobile-create" onClick={create}><Plus/></button><button className={page==='notifications'?'active':''} onClick={()=>nav('notifications')}><Bell/><span>Alerts</span>{unreadCount>0&&<i/>}</button><button className={page==='profile'?'active':''} onClick={()=>nav('profile')}><UserRound/><span>Profile</span></button></nav>}
 export default App

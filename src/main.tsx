@@ -33,6 +33,7 @@ import './cc-status-control.css'
 import './portal-post-tags.css'
 import './portal-watermark.css'
 import './govt-remove-case.css'
+import './nearby-and-approval.css'
 const path = window.location.pathname.toLowerCase()
 const isCCSettings = path === '/cc/settings'
 const isGovernmentSettings = path === '/govt/settings'
