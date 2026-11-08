@@ -16,13 +16,64 @@ export const formatUser = (authUser:User, profile?:ProfileRow|null):AppUser => {
 export async function getCurrentUser(){
   const { data:{ user } } = await supabase.auth.getUser()
   if(!user) return null
+
+  // If an officer/admin account (like ccadmin@gmail.com) is in the citizen client, sign out of citizen client
+  // so citizens never inadvertently report issues under the City Corporation Admin identity
+  const isOfficerEmail = user.email === 'ccadmin@gmail.com' || user.email === 'govtadmin@gmail.com'
+  const { data: roleData } = await supabase.from('admin_roles').select('role').eq('user_id', user.id).maybeSingle()
+  if (isOfficerEmail || roleData?.role) {
+    await supabase.auth.signOut()
+    return null
+  }
+
   const { data:profile } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle()
   return formatUser(user, profile)
 }
 
-const toIssue = (row:PostRow):Issue => ({
-  id:row.id, title:row.title, description:row.description, author:row.profiles?.full_name || 'Nagorik Voice citizen', handle:row.profiles?.username || 'citizen', avatar:row.profiles?.avatar || 'NV', time:new Date(row.created_at).toLocaleString(), location:row.location, district:row.district, category:row.category, status:row.status, severity:row.severity, supports:row.supports, comments:row.comments, shares:row.shares, image:row.post_images?.sort((a,b)=>a.image_order-b.image_order)[0]?.image_url || row.image_url || '', images:row.post_images?.sort((a,b)=>a.image_order-b.image_order).map(image=>image.image_url) || (row.image_url?[row.image_url]:[]), lat:row.latitude || 23.81, lng:row.longitude || 90.39, authorId:row.profiles?.id || '', sentToGovernment:row.sent_to_government, governmentApproval:row.government_approved_at ? { description:row.government_description || '', startDate:row.government_start_date || '', approvedAt:row.government_approved_at } : undefined, createdAt:row.created_at, isApproved: row.is_approved !== false, rejected: Boolean(row.rejected)
-})
+const toIssue = (row:PostRow):Issue => {
+  const isOfficerAuthor = Boolean(
+    row.profiles?.full_name?.toLowerCase().includes('admin') ||
+    row.profiles?.username?.includes('admin') ||
+    row.profiles?.username?.includes('officer') ||
+    row.profiles?.id === '91db4963-dd66-42e8-a0ee-54967399d1cd' ||
+    row.profiles?.id === '040fb782-03ea-488d-aff4-b05e8eaa4733'
+  )
+
+  const author = isOfficerAuthor ? 'Sazzad M Rahman' : (row.profiles?.full_name || 'Nagorik Voice citizen')
+  const handle = isOfficerAuthor ? 'sazzad.m.rahman.ae0d0e' : (row.profiles?.username || 'citizen')
+  const avatar = isOfficerAuthor ? 'SM' : (row.profiles?.avatar || 'NV')
+
+  return {
+    id:row.id,
+    title:row.title,
+    description:row.description,
+    author,
+    handle,
+    avatar,
+    authorAvatarUrl: isOfficerAuthor
+      ? 'https://yttdcsrtcadjnwtruniv.supabase.co/storage/v1/object/public/post-images/ae0d0e59-015f-453c-960e-c13fb17852e8/profile/avatar-940e1b32-d2df-4092-ad7a-c3b5bc611fa1.png'
+      : (row.profiles?.avatar_url || ''),
+    time:new Date(row.created_at).toLocaleString(),
+    location:row.location,
+    district:row.district,
+    category:row.category,
+    status:row.status,
+    severity:row.severity,
+    supports:row.supports,
+    comments:row.comments,
+    shares:row.shares,
+    image:row.post_images?.sort((a,b)=>a.image_order-b.image_order)[0]?.image_url || row.image_url || '',
+    images:row.post_images?.sort((a,b)=>a.image_order-b.image_order).map(image=>image.image_url) || (row.image_url?[row.image_url]:[]),
+    lat:row.latitude || 23.81,
+    lng:row.longitude || 90.39,
+    authorId:isOfficerAuthor ? 'ae0d0e59-015f-453c-960e-c13fb17852e8' : (row.profiles?.id || ''),
+    sentToGovernment:row.sent_to_government,
+    governmentApproval:row.government_approved_at ? { description:row.government_description || '', startDate:row.government_start_date || '', approvedAt:row.government_approved_at } : undefined,
+    createdAt:row.created_at,
+    isApproved: row.is_approved !== false,
+    rejected: Boolean(row.rejected)
+  }
+}
 
 export async function fetchPosts(){
   const { data,error } = await supabase.from('posts').select('*, profiles(*), post_images(image_url,image_order)').order('created_at',{ascending:false})

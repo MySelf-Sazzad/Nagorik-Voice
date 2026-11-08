@@ -29,7 +29,12 @@ export default function Auth({onLogin}:{onLogin:(user:AppUser)=>void}){
     } else setNotice('Account created. Check your email and confirm your address, then log in.')
     return
    }
-   const {data,error}=await supabase.auth.signInWithPassword({email:email.trim().toLowerCase(),password})
+   const trimmedEmail = email.trim().toLowerCase()
+   if (trimmedEmail === 'ccadmin@gmail.com' || trimmedEmail === 'govtadmin@gmail.com') {
+     setNotice('This is an Officer portal account. Please log in via /cc or /govt. Use your citizen email here.')
+     return
+   }
+   const {data,error}=await supabase.auth.signInWithPassword({email:trimmedEmail,password})
    if(error) throw error
    if(data.user){
     const {data:profile}=await supabase.from('profiles').select('*').eq('id',data.user.id).maybeSingle()

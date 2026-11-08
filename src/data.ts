@@ -1,6 +1,6 @@
 export type Status = 'Reported' | 'Acknowledged' | 'Under Review' | 'In Progress' | 'Resolved'
 export type GovernmentApproval = { description:string; startDate:string; approvedAt:string }
-export type Issue = { id:number; title:string; description:string; author:string; handle:string; avatar:string; authorId?:string; verified?:boolean; time:string; location:string; district:string; category:string; status:Status; severity:'Low'|'Medium'|'High'|'Critical'; supports:number; comments:number; shares:number; image:string; images?:string[]; saved?:boolean; supported?:boolean; lat:number; lng:number; sentToGovernment?:boolean; governmentApproval?:GovernmentApproval; createdAt?:string; isApproved?:boolean; rejected?:boolean; distanceKm?:number }
+export type Issue = { id:number; title:string; description:string; author:string; handle:string; avatar:string; authorAvatarUrl?:string; authorId?:string; verified?:boolean; time:string; location:string; district:string; category:string; status:Status; severity:'Low'|'Medium'|'High'|'Critical'; supports:number; comments:number; shares:number; image:string; images?:string[]; saved?:boolean; supported?:boolean; lat:number; lng:number; sentToGovernment?:boolean; governmentApproval?:GovernmentApproval; createdAt?:string; isApproved?:boolean; rejected?:boolean; distanceKm?:number }
 
 export const categories = ['All issues','Broken Road','Pothole','Waterlogging','Drainage','Garbage/Waste','Traffic Congestion','Streetlight','Water Supply','Public Safety','Environmental Issue']
 
