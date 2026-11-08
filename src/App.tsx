@@ -89,7 +89,7 @@ function App(){
    {page==='details'&&selected&&<Details issue={items.find(i=>i.id===selected.id)||selected} user={user} back={()=>navigate('home')} support={toggleSupport} save={toggleSave} toast={showToast}/>} 
   </main>{page==='home'&&<RightRail issues={approvedItems} openIssue={openIssue}/>}</div>
   <MobileNav page={page} nav={navigate} create={()=>setCreateOpen(true)} unreadCount={unreadCount}/>
-  {createOpen&&<MobileReportModal close={()=>setCreateOpen(false)} user={user} publish={async(draft,files)=>{try{const images=await Promise.all(files.map(file=>uploadPostImage(user.id,file)));const issue=await createPost(user,{...draft,image:images[0]||'',images});saveItems([issue,...items]);setCreateOpen(false);setCategory('All issues');navigate('home');showToast('Report submitted! Pending City Corporation review before publication.')}catch(error){showToast(error instanceof Error?error.message:'Could not publish your report.')}}}/>} 
+  {createOpen&&<MobileReportModal close={()=>setCreateOpen(false)} user={user} publish={async(draft,files)=>{try{const images=await Promise.all(files.map(file=>uploadPostImage(user.id,file)));const issue=await createPost(user,{...draft,image:images[0]||'',images});saveItems([issue,...items]);setCreateOpen(false);setCategory('All issues');navigate('home');showToast('Report submitted! Sent to City Corporation for review before publication.')}catch(error){console.error('Publish error:',error);showToast(error instanceof Error?`Could not publish: ${error.message}`:'Could not publish your report. Please try again.')}}}/>} 
   {toast&&<div className="toast"><CheckCircle2 size={19}/>{toast}</div>}
  </div>
 }
